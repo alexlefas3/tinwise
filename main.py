@@ -56,7 +56,7 @@ def fetch_bot_response(question, user_type, previous_answer=None):
         return f"Error: Connection Failed ({e})", ""
 
 def sync_chatbot_data():
-    print("--- ΕΚΚΙΝΗΣΗ ΠΛΗΡΟΥΣ ΕΛΛΗΝΙΚΟΥ ΣΥΓΧΡΟΝΙΣΜΟΥ (ΣΤΟΧΕΥΣΗ ΑΡΙΣΤΕΡΩΝ ΣΤΗΛΩΝ) ---")
+    print("--- ΕΚΚΙΝΗΣΗ ΕΛΛΗΝΙΚΟΥ ΣΥΓΧΡΟΝΙΣΜΟΥ (ΣΤΟΧΕΥΣΗ ΑΡΙΣΤΕΡΩΝ ΣΤΗΛΩΝ) ---")
     if not os.path.exists(EXCEL_FILE):
         print(f"To αρχείο Excel '{EXCEL_FILE}' δεν βρέθηκε!")
         return
@@ -64,7 +64,8 @@ def sync_chatbot_data():
     df = pd.read_excel(EXCEL_FILE)
     question_col = df.columns[0]
     
-    # Το loop θα τρέξει πλέον για ΟΛΕΣ τις γραμμές του Excel διαδοχικά
+    executed_questions = 0
+    
     for index, row in df.iterrows():
         question = str(row[question_col]).strip()
         
@@ -78,17 +79,19 @@ def sync_chatbot_data():
             current_user_type = "p"
             role_label = "Patient"
         
-        print(f"\n[{role_label}] Ερώτηση {index+1}: {question[:50]}...")
+        print(f"\n[{role_label}] ΕΚΤΕΛΕΣΗ ΔΟΚΙΜΗΣ -> Ερώτηση {index+1}: {question[:50]}...")
         
         last_reply = None
         all_links = []
         
-        # Λήψη 10 απαντήσεων ανά ερώτηση
+        # Τρέχουμε 10 φορές για τις 10 απαντήσεις
         for i in range(1, 11):
             print(f"  -> Λήψη Answer {i} στα Ελληνικά...")
             reply, links = fetch_bot_response(question, current_user_type, previous_answer=last_reply)
             
-            # Αποθήκευση με βάση τη θέση της στήλης (στήλες B, C, D...)
+            # ΑΛΛΑΓΗ: Αντί για το όνομα της στήλης, γράφουμε απευθείας με βάση τον αριθμό της στήλης.
+            # i = 1 (Answer 1) -> πάει στη στήλη 1 (δηλαδή τη 2η στήλη, τη Β)
+            # i = 2 (Answer 2) -> πάει στη στήλη 2 (δηλαδή την 3η στήλη, τη C)
             df.iloc[index, i] = reply
             
             if "Error:" not in str(reply):
@@ -97,9 +100,9 @@ def sync_chatbot_data():
             if links:
                 all_links.append(links)
                 
-            time.sleep(0.6) # Παύση προστασίας rate limit
+            time.sleep(0.6)
         
-        # Αποθήκευση των links στη στήλη O (θέση 14)
+        # Βάζουμε τα links στη στήλη O (θέση 14 στο Excel, αν μετρήσεις A=0, B=1... O=14)
         if len(df.columns) > 14:
             if all_links:
                 combined = ", ".join(all_links).split(", ")
@@ -108,11 +111,13 @@ def sync_chatbot_data():
             else:
                 df.iloc[index, 14] = ""
                 
-        time.sleep(1) # Παύση ανάμεσα στις ερωτήσεις
+        executed_questions += 1
+        if executed_questions >= 1:
+            print("\n[INFO] Η δοκιμαστική ερώτηση ολοκληρώθηκε.")
+            break
             
-    # Αποθήκευση ολόκληρου του αρχείου
     df.to_excel(EXCEL_FILE, index=False)
-    print("\n[SUCCESS] Ο πλήρης συγχρονισμός ολοκληρώθηκε! Όλες οι ελληνικές απαντήσεις μπήκαν σωστά στις αριστερές στήλες.")
+    print("[SUCCESS] Το αρχείο Excel ενημερώθηκε στα αριστερά κουτάκια!")
 
 if __name__ == "__main__":
     sync_chatbot_data()
