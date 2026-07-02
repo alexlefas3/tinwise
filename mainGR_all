@@ -1,0 +1,122 @@
+import os
+import re
+import requests
+import pandas as pd
+import time
+import urllib3
+
+# Απενεργοποίηση των warnings λόγω του verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- ΚΕΝΤΡΙΚΕΣ ΡΥΘΜΙΣΕΙΣ ---
+API_HOST = "https://tinwise.ngnc.gr:8902/chat"
+
+# Άφησέ το κενό "" αν δεν έχεις κάνει login επιτυχώς
+MOODLE_TOKEN = "" 
+# Το PHPSESSID σου που δούλεψε στη δοκιμή
+PHPSESSID = "p31fni08blhnb46p0175a8rg6"  
+
+LANG = "en"
+EXCEL_FILE = "TinWise Chatbot.xlsx"
+
+if not os.path.exists(EXCEL_FILE) and os.path.exists("TinWise Chatbot.xls"):
+    EXCEL_FILE = "TinWise Chatbot.xls"
+
+def fetch_bot_response(question, user_type, previous_answer=None):
+    """Στέλνει την ερώτηση στο API προσομοιώνοντας ακριβώς τη δομή του Browser."""
+    payload = {
+        "message": question,
+        "type": user_type,
+        "lang": LANG
+    }
+    
+    # Διατήρηση της null λογικής που δούλεψε
+    payload["token"] = MOODLE_TOKEN if MOODLE_TOKEN.strip() != "" else None
+    payload["previous_answer"] = previous_answer if previous_answer else None
+
+    headers = {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://tinwise.ngnc.gr',
+        'Referer': 'https://tinwise.ngnc.gr/'
+    }
+    
+    cookies = {}
+    if PHPSESSID:
+        cookies["PHPSESSID"] = PHPSESSID
+    if MOODLE_TOKEN and MOODLE_TOKEN.strip() != "":
+        cookies["moodle_token"] = MOODLE_TOKEN
+    
+    try:
+        response = requests.post(API_HOST, json=payload, headers=headers, cookies=cookies, timeout=15, verify=False)
+        if response.status_code == 200:
+            data = response.json()
+            reply = data.get("reply", "")
+            
+            links = re.findall(r'href="([^"]+)"', reply)
+            return reply, ", ".join(links) if links else ""
+        else:
+            return f"Error: HTTP {response.status_code}", ""
+    except Exception as e:
+        return f"Error: Connection Failed ({e})", ""
+
+def sync_chatbot_data():
+    print("--- ΕΚΚΙΝΗΣΗ ΠΛΗΡΟΥΣ ΣΥΓΧΡΟΝΙΣΜΟΥ (ΟΛΕΣ ΟΙ ΕΡΩΤΗΣΕΙΣ) ---")
+    if not os.path.exists(EXCEL_FILE):
+        print(f"To αρχείο Excel '{EXCEL_FILE}' δεν βρέθηκε!")
+        return
+
+    df = pd.read_excel(EXCEL_FILE)
+    question_col = df.columns[0]
+    
+    # Διαβάζει όλες τις γραμμές πλέον, χωρίς μετρητή διακοπής
+    for index, row in df.iterrows():
+        question = str(row[question_col]).strip()
+        
+        if not question or question == "nan" or "questions" in question.lower():
+            continue
+            
+        current_user_type = "c" if "pulsatile tinnitus" in question.lower() else "p"
+        role_label = "Clinician" if current_user_type == "c" else "Patient"
+        
+        print(f"\n[{role_label}] Ερώτηση {index+1}: {question[:50]}...")
+        
+        last_reply = None
+        all_links = []
+        
+        for i in range(1, 11):
+            col_name = f"Answer {i}"
+            if col_name not in df.columns:
+                df[col_name] = None
+                
+            print(f"  -> Λήψη {col_name}...")
+            reply, links = fetch_bot_response(question, current_user_type, previous_answer=last_reply)
+            
+            df.at[index, col_name] = reply
+            
+            if "Error:" not in str(reply):
+                last_reply = reply
+                
+            if links:
+                all_links.append(links)
+                
+            # Κρατάμε τα 0.6 δευτερόλεπτα παύσης για να μην υπερφορτωθεί ο server
+            time.sleep(0.6)
+        
+        if "Links" in df.columns:
+            if all_links:
+                combined = ", ".join(all_links).split(", ")
+                unique = list(set([lnk.strip() for lnk in combined if lnk.strip()]))
+                df.at[index, "Links"] = ", ".join(unique)
+            else:
+                df.at[index, "Links"] = ""
+                
+        # Μικρή παύση 1 δευτερολέπτου πριν αλλάξει ερώτηση
+        time.sleep(1)
+            
+    df.to_excel(EXCEL_FILE, index=False)
+    print("\n[SUCCESS] Ο πλήρης συγχρονισμός ολοκληρώθηκε! Όλες οι απαντήσεις αποθηκεύτηκαν στο Excel.")
+
+if __name__ == "__main__":
+    sync_chatbot_data()
